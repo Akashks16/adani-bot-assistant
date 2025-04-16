@@ -49,11 +49,11 @@ const BotAssistantApp = () => {
   const currentSourceRef = useRef(null);
   const conversationContextRef = useRef(null);
 
-  const formatTimer = (seconds) => {
-    const minutes = Math.floor(seconds / 60);
-    const remainingSeconds = Math.floor(seconds % 60);
-    return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
-  };
+  //   const formatTimer = (seconds) => {
+  //     const minutes = Math.floor(seconds / 60);
+  //     const remainingSeconds = Math.floor(seconds % 60);
+  //     return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
+  //   };
 
   const startTimer = () => {
     recordingStartTimeRef.current = Date.now();
@@ -504,6 +504,7 @@ const BotAssistantApp = () => {
           }
 
           if (data?.source === "transcriber" && typeof data.text === "string") {
+            setIsProcessing(true);
             setMessages((prev) => [
               ...prev,
               {
@@ -522,6 +523,8 @@ const BotAssistantApp = () => {
               setMessages((prev) => [...prev, mergedMessage]);
               botMessageBufferRef.current = [];
             } else if (typeof data.text === "string") {
+              setIsProcessing(false);
+
               setMessages((prev) => [
                 ...prev,
                 {
