@@ -287,6 +287,15 @@ body {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
+.message-options {
+  padding: 16px 20px;
+  border-radius: 8px;
+  position: relative;
+  font-size: 15px;
+  line-height: 1.6;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
 .ai-message {
   background-color: var(--ai-surface);
   color: var(--ai-text);
@@ -302,6 +311,16 @@ body {
   );
   color: #fff;
   border-top-right-radius: 4px;
+}
+
+.options-container {
+  background: linear-gradient(
+    135deg,
+    var(--ai-gradient-2),
+    var(--ai-gradient-1)
+  );
+  color: #fff;
+  /* border-top-right-radius: 4px; */
 }
 
 .message-content {
