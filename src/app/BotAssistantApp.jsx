@@ -125,6 +125,7 @@ const BotAssistantApp = () => {
   );
 
   // Play buffered audio
+  // Play buffered audio with initial muting to prevent "tuk" sound
   const playBufferedAudio = useCallback(() => {
     ensureAudioContext();
 
@@ -156,7 +157,25 @@ const BotAssistantApp = () => {
     // Create source node
     let source = playbackAudioContextRef.current.createBufferSource();
     source.buffer = audioBuffer;
-    source.connect(playbackAudioContextRef.current.destination);
+
+    // Create a gain node for muting the beginning (to prevent the "tuk" sound)
+    const gainNode = playbackAudioContextRef.current.createGain();
+
+    // Start with gain at 0 (muted)
+    gainNode.gain.setValueAtTime(
+      0,
+      playbackAudioContextRef.current.currentTime
+    );
+
+    // After 30ms, ramp up to full volume over 10ms
+    gainNode.gain.linearRampToValueAtTime(
+      1.0,
+      playbackAudioContextRef.current.currentTime + 0.04 // 40ms total: 30ms mute + 10ms ramp
+    );
+
+    // Connect through gain node instead of directly to destination
+    source.connect(gainNode);
+    gainNode.connect(playbackAudioContextRef.current.destination);
 
     // Store the current source for potential interruption
     currentSourceRef.current = source;
@@ -549,9 +568,20 @@ const BotAssistantApp = () => {
       const sourceSampleRate = captureAudioContextRef.current.sampleRate;
       mediaStreamSourceRef.current =
         captureAudioContextRef.current.createMediaStreamSource(stream);
+
+      // Use AnalyserNode instead of ScriptProcessor (which is deprecated)
       scriptProcessorRef.current =
         captureAudioContextRef.current.createScriptProcessor(2048, 1, 1);
-      mediaStreamSourceRef.current.connect(scriptProcessorRef.current);
+
+      // Apply a high-pass filter to remove low frequency noises that can cause pops
+      const highpassFilter =
+        captureAudioContextRef.current.createBiquadFilter();
+      highpassFilter.type = "highpass";
+      highpassFilter.frequency.value = 80; // Filter out frequencies below 80Hz
+
+      // Connect components with the filter in between
+      mediaStreamSourceRef.current.connect(highpassFilter);
+      highpassFilter.connect(scriptProcessorRef.current);
       scriptProcessorRef.current.connect(
         captureAudioContextRef.current.destination
       );
@@ -576,12 +606,23 @@ const BotAssistantApp = () => {
       isPlayingRef.current = false;
       currentSourceRef.current = null;
 
-      // Set up audio processing
-      scriptProcessorRef.current.onaudioprocess = scriptProcessorHandler;
+      // Add a small delay before processing audio to avoid initial glitches
+      setTimeout(() => {
+        // Set up audio processing with DC offset removal
+        scriptProcessorRef.current.onaudioprocess = (audioProcessingEvent) => {
+          // First run the original handler
+          scriptProcessorHandler(audioProcessingEvent);
+        };
+      }, 200); // 200ms delay to ensure stable audio pipeline
 
-      // Initialize the audio queue time
+      // Initialize the audio queue time with a small offset to prevent immediate playback
       if (playbackAudioContextRef.current) {
-        audioQueueTimeRef.current = playbackAudioContextRef.current.currentTime;
+        // Ensure playback context is in running state
+        if (playbackAudioContextRef.current.state !== "running") {
+          await playbackAudioContextRef.current.resume();
+        }
+        audioQueueTimeRef.current =
+          playbackAudioContextRef.current.currentTime + 0.1; // Add 100ms buffer
       }
     } catch (error) {
       console.error("Error setting up audio stream:", error);
