@@ -12,14 +12,7 @@ const BotAssistantApp = () => {
   const [recordingTime, setRecordingTime] = useState(0);
   const [micDialogOpen, setMicDialogOpen] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const [messages, setMessages] = useState([
-    {
-      id: 1,
-      text: "Hello! I'm your AI assistant. How can I help you today?",
-      sender: "ai",
-      timestamp: new Date(),
-    },
-  ]);
+  const [messages, setMessages] = useState([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isListening, setIsListening] = useState(false);
 
@@ -500,7 +493,7 @@ const BotAssistantApp = () => {
                 timestamp: new Date(),
               },
             ]);
-            setIsTyping(true);
+            // setIsTyping(true);
           } else if (data?.source === "llm" && typeof data.text === "string") {
             if (data.text === "END") {
               setIsTyping(false);
@@ -510,11 +503,17 @@ const BotAssistantApp = () => {
               setMessages((prev) => [...prev, mergedMessage]);
               botMessageBufferRef.current = [];
             } else if (typeof data.text === "string") {
-              botMessageBufferRef.current.push({
-                type: "bot",
-                text: data.text,
-                timestamp: new Date(),
-              });
+              setMessages((prev) => [
+                ...prev,
+                {
+                  type: "bot",
+                  text: data.text,
+                  timestamp: new Date(),
+                },
+              ]);
+              //   botMessageBufferRef.current.push({
+
+              //   });
             }
           }
         } catch (error) {

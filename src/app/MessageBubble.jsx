@@ -14,6 +14,9 @@ const MessageBubble = ({ messages, isProcessing }) => {
   const formatTime = (date) => {
     return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   };
+
+  console.log("messages: ", messages);
+
   return (
     <div className="messages-area">
       <div className="message-container">
@@ -21,17 +24,17 @@ const MessageBubble = ({ messages, isProcessing }) => {
           <div
             key={message.id}
             className={`message-wrapper ${
-              message.sender === "user" ? "user-message-wrapper" : ""
+              message.type === "user" ? "user-message-wrapper" : ""
             }`}
           >
-            {message.sender === "ai" && (
+            {message.type === "bot" && (
               <div className="ai-avatar">
                 <div className="ai-avatar-icon"></div>
               </div>
             )}
             <div
               className={`message ${
-                message.sender === "user" ? "user-message" : "ai-message"
+                message.type === "user" ? "user-message" : "ai-message"
               }`}
             >
               <div className="message-content">{message.text}</div>
