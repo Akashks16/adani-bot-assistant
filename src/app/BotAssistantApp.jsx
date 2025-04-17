@@ -565,16 +565,20 @@ const BotAssistantApp = () => {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
 
+      const dataJson = {
+        sampleRate: 8000,
+      };
+
       // Initialize the capture AudioContext
       captureAudioContextRef.current = new (window.AudioContext ||
-        window.webkitAudioContext)();
+        window.webkitAudioContext)(dataJson);
       const sourceSampleRate = captureAudioContextRef.current.sampleRate;
       mediaStreamSourceRef.current =
         captureAudioContextRef.current.createMediaStreamSource(stream);
 
       // Use AnalyserNode instead of ScriptProcessor (which is deprecated)
       scriptProcessorRef.current =
-        captureAudioContextRef.current.createScriptProcessor(2048, 1, 1);
+        captureAudioContextRef.current.createScriptProcessor(512, 1, 1);
 
       // Apply a high-pass filter to remove low frequency noises that can cause pops
       const highpassFilter =

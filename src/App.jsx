@@ -2,11 +2,11 @@ import "./App.css";
 import AIAssistantUI from "./app/AIAssistantUI";
 
 function App() {
-  console.log("here");
+  const pathname = window.parent.location.pathname?.split("/")?.[1] ?? "";
 
   return (
     <>
-      <AIAssistantUI />
+      <AIAssistantUI pathname={pathname} />
     </>
   );
 }
