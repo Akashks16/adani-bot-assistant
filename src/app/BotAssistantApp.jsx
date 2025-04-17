@@ -661,9 +661,10 @@ const BotAssistantApp = () => {
   const connectWebSocket = useCallback(() => {
     return new Promise((resolve, reject) => {
       const url =
-        "wss://reliance-retail.infra.kapturecrm.com/orchestrator_reliance/ws";
-      // const url = "wss://vb-platform.infra.kapturecrm.com/orchestrator/ws"
-      // "wss://happy-topical-jaybird.ngrok-free.app/orchestrator_reliance/ws";
+        // "wss://conv-bot.infra.kapturecrm.com/orchestrator_reliance/ws";
+        // const url = "wss://vb-platform.infra.kapturecrm.com/orchestrator/ws"
+        "wss://happy-topical-jaybird.ngrok-free.app/orchestrator_reliance/ws";
+      // "wss://bbchat.infra.kapturecrm.com/orchestrator_reliance/ws"
 
       websocketRef.current = new WebSocket(url);
 
