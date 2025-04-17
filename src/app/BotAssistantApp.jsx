@@ -49,11 +49,12 @@ const BotAssistantApp = () => {
   const currentSourceRef = useRef(null);
   const conversationContextRef = useRef(null);
 
-  //   const formatTimer = (seconds) => {
-  //     const minutes = Math.floor(seconds / 60);
-  //     const remainingSeconds = Math.floor(seconds % 60);
-  //     return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
-  //   };
+  // Added based on JS implementation
+  const sendBufferRef = useRef([]);
+  const isProcessingRef = useRef(false);
+  const recordedChunksRef = useRef([]);
+  const bufferProcessIntervalRef = useRef(null);
+  const istreamRef = useRef(false);
 
   const startTimer = () => {
     recordingStartTimeRef.current = Date.now();
@@ -80,6 +81,44 @@ const BotAssistantApp = () => {
 
     if (playbackAudioContextRef.current.state === "suspended") {
       playbackAudioContextRef.current.resume().catch(console.error);
+    }
+  }, []);
+
+  // Helper function for converting Float32Array to Int16Array (PCM format)
+  const floatTo16BitPCM = useCallback((inputArray) => {
+    const output = new Int16Array(inputArray.length);
+    for (let i = 0; i < inputArray.length; i++) {
+      const s = Math.max(-1, Math.min(1, inputArray[i]));
+      output[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+    }
+    return output;
+  }, []);
+
+  // Process and send buffered audio data
+  const processSendBuffer = useCallback(() => {
+    if (sendBufferRef.current.length === 0 || isProcessingRef.current) {
+      return;
+    }
+
+    isProcessingRef.current = true;
+
+    try {
+      const toSend = sendBufferRef.current.shift();
+      if (
+        websocketRef.current &&
+        websocketRef.current.readyState === WebSocket.OPEN
+      ) {
+        websocketRef.current.send(toSend);
+      }
+    } catch (error) {
+      console.error("Error sending audio data:", error);
+    } finally {
+      isProcessingRef.current = false;
+
+      // Continue processing if buffer still has items
+      if (sendBufferRef.current.length > 0) {
+        setTimeout(() => processSendBuffer(), 10);
+      }
     }
   }, []);
 
@@ -125,7 +164,6 @@ const BotAssistantApp = () => {
   );
 
   // Play buffered audio
-  // Play buffered audio with initial muting to prevent "tuk" sound
   const playBufferedAudio = useCallback(() => {
     ensureAudioContext();
 
@@ -374,97 +412,251 @@ const BotAssistantApp = () => {
     [stopAllAudio]
   );
 
-  // Modified function to detect voice activity and only send audio when speaking
-  const scriptProcessorHandler = useCallback(
-    (event) => {
+  // Modified startAudioStream function with the JS implementation logic
+  const startAudioStream = useCallback(async () => {
+    try {
+      console.log("Stream start");
+
+      // Reset buffers
+      sendBufferRef.current = [];
+      recordedChunksRef.current = [];
+      istreamRef.current = false;
+
+      const audioTrackConstraints = {
+        echoCancellation: true,
+        autoGainControl: true,
+        noiseSuppression: true,
+        channelCount: 1, // Force mono audio to avoid echo issues
+      };
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: audioTrackConstraints,
+      });
+      console.log("🎤 Microphone stream:", stream);
+      streamRef.current = stream;
+
+      // Ensure WebSocket is open
       if (
         !websocketRef.current ||
         websocketRef.current.readyState !== WebSocket.OPEN
-      )
+      ) {
+        console.warn("⚠️ Audio WebSocket not ready. Retrying...");
+        setTimeout(() => startAudioStream(), 1000);
         return;
-
-      const audioData = event.inputBuffer.getChannelData(0);
-
-      // Calculate audio energy (RMS)
-      let sum = 0;
-      for (let i = 0; i < audioData.length; i++) {
-        sum += audioData[i] * audioData[i];
       }
-      const rms = Math.sqrt(sum / audioData.length);
 
-      // Detect speech based on energy threshold
-      const isSpeakingNow = rms > silenceThresholdRef.current;
+      console.log("Stream start 1");
 
-      if (isSpeakingNow) {
-        // Reset silence counter
-        consecutiveSilentFramesRef.current = 0;
+      // ✅ Ensure AudioContext is initialized with correct sample rate
+      if (!captureAudioContextRef.current) {
+        console.log("Stream start 1.1");
+        captureAudioContextRef.current = new AudioContext({ sampleRate: 8000 });
+      }
 
-        // If speaking timeout is active, clear it
-        if (silenceTimeoutRef.current) {
-          clearTimeout(silenceTimeoutRef.current);
-          silenceTimeoutRef.current = null;
-        }
-
-        // If not already marked as speaking, set speaking state
-        if (!isSpeaking) {
-          setIsSpeaking(true);
-          console.log("Speech detected, starting to send audio");
-        }
-
-        // Process and send the audio data
-        const resampledData = resampleAudio(
-          audioData,
-          captureAudioContextRef.current.sampleRate,
-          8000
-        );
-        const int16Array = convertToInt16(resampledData);
-        const base64String = btoa(
-          String.fromCharCode(...new Uint8Array(int16Array.buffer))
+      if (captureAudioContextRef.current.state === "suspended") {
+        console.log(
+          "Stream start 1.2 - Before resume, state:",
+          captureAudioContextRef.current.state
         );
 
-        const payload = {
-          source: "client",
-          audio: base64String,
-        };
+        try {
+          await captureAudioContextRef.current.resume();
+          console.log("🔊 AudioContext resumed successfully.");
+        } catch (error) {
+          console.error("❌ Error resuming AudioContext:", error);
+        }
 
-        websocketRef.current.send(JSON.stringify(payload));
-      } else {
-        // Increment silent frame counter
-        consecutiveSilentFramesRef.current++;
+        console.log(
+          "Stream start 1.2 - After resume, state:",
+          captureAudioContextRef.current.state
+        );
+      }
 
-        // If we've had enough consecutive silent frames and we're marked as speaking
-        if (
-          consecutiveSilentFramesRef.current >=
-            silenceFrameThresholdRef.current &&
-          isSpeaking
-        ) {
-          // Schedule silence timeout if not already scheduled
-          if (!silenceTimeoutRef.current) {
-            silenceTimeoutRef.current = setTimeout(() => {
-              setIsSpeaking(false);
-              console.log("Silence detected, pausing audio transmission");
-              silenceTimeoutRef.current = null;
+      // Create audio processing pipeline
+      mediaStreamSourceRef.current =
+        captureAudioContextRef.current.createMediaStreamSource(stream);
+      scriptProcessorRef.current =
+        captureAudioContextRef.current.createScriptProcessor(1024, 1, 1);
+      mediaStreamSourceRef.current.connect(scriptProcessorRef.current);
 
-              // Send an empty audio packet to indicate end of speech segment
-              const emptyPayload = {
-                source: "client",
-                audio: "",
-                speech_end: true, // Optional flag to indicate speech segment ended
-              };
+      // Create a silent destination node to prevent feedback
+      const silentDestination = captureAudioContextRef.current.createGain();
+      silentDestination.gain.value = 0;
+      scriptProcessorRef.current.connect(silentDestination);
+      silentDestination.connect(captureAudioContextRef.current.destination);
 
-              if (
-                websocketRef.current &&
-                websocketRef.current.readyState === WebSocket.OPEN
-              ) {
-                websocketRef.current.send(JSON.stringify(emptyPayload));
-              }
-            }, 500); // Wait 500ms of silence before stopping transmission
+      // Set up a timer to process the buffer
+      bufferProcessIntervalRef.current = setInterval(
+        () => processSendBuffer(),
+        100
+      );
+
+      // IMPORTANT: Maintain the original delay mechanism!
+      istreamRef.current = false;
+      setTimeout(() => {
+        console.log("🕒 Delay completed, now streaming audio data.");
+        istreamRef.current = true;
+      }, 6000); // Keep the original 8-second delay
+
+      scriptProcessorRef.current.onaudioprocess = (e) => {
+        const inputBuffer = e.inputBuffer.getChannelData(0);
+        if (inputBuffer.length === 0) {
+          console.warn("⚠️ No audio data captured.");
+          return;
+        }
+
+        const pcmData = floatTo16BitPCM(inputBuffer);
+        const chunkToSend = new Int16Array(pcmData);
+        const byteArray = new Uint8Array(chunkToSend.buffer);
+        const base64Data = btoa(String.fromCharCode(...byteArray));
+
+        // Store raw audio data for download functionality if recording is enabled
+        if (isRecording) {
+          recordedChunksRef.current.push(new Float32Array(inputBuffer));
+        }
+
+        // Use the original delay logic
+        if (!istreamRef.current) {
+          // Still in delay period, don't send audio yet
+          return;
+        } else {
+          const jsonData = JSON.stringify({
+            source: "client",
+            audio: base64Data,
+          });
+
+          // Add to send buffer instead of sending directly
+          sendBufferRef.current.push(jsonData);
+
+          // Trigger buffer processing
+          if (!isProcessingRef.current) {
+            processSendBuffer();
           }
         }
+      };
+
+      setIsListening(true);
+      console.log("🎤 Audio streaming started with 8-second delay...");
+
+      // Initialize the audio queue time with a small offset to prevent immediate playback
+      if (playbackAudioContextRef.current) {
+        // Ensure playback context is in running state
+        if (playbackAudioContextRef.current.state !== "running") {
+          await playbackAudioContextRef.current.resume();
+        }
+        audioQueueTimeRef.current =
+          playbackAudioContextRef.current.currentTime + 0.1; // Add 100ms buffer
       }
-    },
-    [isSpeaking]
-  );
+    } catch (error) {
+      console.error("Error setting up audio stream:", error);
+      throw error;
+    }
+  }, [floatTo16BitPCM, processSendBuffer]);
+
+  const cleanup = useCallback(async () => {
+    // Clear the buffer process interval
+    if (bufferProcessIntervalRef.current) {
+      clearInterval(bufferProcessIntervalRef.current);
+      bufferProcessIntervalRef.current = null;
+    }
+
+    // Clear VAD timeouts
+    if (silenceTimeoutRef.current) {
+      clearTimeout(silenceTimeoutRef.current);
+      silenceTimeoutRef.current = null;
+    }
+
+    if (speakingTimeoutRef.current) {
+      clearTimeout(speakingTimeoutRef.current);
+      speakingTimeoutRef.current = null;
+    }
+
+    setIsSpeaking(false);
+    setIsListening(false);
+
+    // Stop audio playback
+    stopAllAudio();
+
+    // Reset PCM audio state
+    audioBufferQueueRef.current = [];
+    isPlayingRef.current = false;
+
+    // Reset other buffers
+    sendBufferRef.current = [];
+    recordedChunksRef.current = [];
+    istreamRef.current = false;
+    isProcessingRef.current = false;
+
+    if (currentSourceRef.current) {
+      try {
+        currentSourceRef.current.onended = null;
+        currentSourceRef.current.stop();
+      } catch (e) {
+        // Ignore if already stopped
+      }
+      currentSourceRef.current = null;
+    }
+
+    // Stop media stream
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+
+    // Disconnect audio nodes
+    if (scriptProcessorRef.current) {
+      scriptProcessorRef.current.disconnect();
+      scriptProcessorRef.current = null;
+    }
+
+    if (mediaStreamSourceRef.current) {
+      mediaStreamSourceRef.current.disconnect();
+      mediaStreamSourceRef.current = null;
+    }
+
+    // Close audio contexts
+    if (captureAudioContextRef.current) {
+      await captureAudioContextRef.current.close().catch(console.error);
+      captureAudioContextRef.current = null;
+    }
+
+    if (playbackAudioContextRef.current) {
+      await playbackAudioContextRef.current.close().catch(console.error);
+      playbackAudioContextRef.current = null;
+    }
+
+    // Close WebSocket
+    if (websocketRef.current) {
+      websocketRef.current.close(1000, "Normal closure");
+      websocketRef.current = null;
+    }
+
+    // Reset audio queue
+    audioQueueTimeRef.current = 0;
+  }, [stopAllAudio]);
+
+  const handleOpenMicDialog = () => {
+    setMicDialogOpen(true);
+  };
+
+  const handleCloseMicDialog = () => {
+    setMicDialogOpen(false);
+  };
+
+  const handleStartRecordingWithContext = async () => {
+    try {
+      await cleanup();
+      await connectWebSocket(conversationContextRef.current);
+      await startAudioStream();
+      setIsRecording(true);
+      startTimer();
+      handleCloseMicDialog();
+    } catch (error) {
+      console.error("Error starting recording with context:", error);
+      await cleanup();
+      stopTimer();
+    }
+  };
 
   const connectWebSocket = useCallback(() => {
     return new Promise((resolve, reject) => {
@@ -560,175 +752,6 @@ const BotAssistantApp = () => {
       };
     });
   }, [handleInterruption, handleAudioStream]);
-
-  const startAudioStream = useCallback(async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
-
-      const dataJson = {
-        sampleRate: 8000,
-      };
-
-      // Initialize the capture AudioContext
-      captureAudioContextRef.current = new (window.AudioContext ||
-        window.webkitAudioContext)(dataJson);
-      const sourceSampleRate = captureAudioContextRef.current.sampleRate;
-      mediaStreamSourceRef.current =
-        captureAudioContextRef.current.createMediaStreamSource(stream);
-
-      // Use AnalyserNode instead of ScriptProcessor (which is deprecated)
-      scriptProcessorRef.current =
-        captureAudioContextRef.current.createScriptProcessor(512, 1, 1);
-
-      // Apply a high-pass filter to remove low frequency noises that can cause pops
-      const highpassFilter =
-        captureAudioContextRef.current.createBiquadFilter();
-      highpassFilter.type = "highpass";
-      highpassFilter.frequency.value = 80; // Filter out frequencies below 80Hz
-
-      // Connect components with the filter in between
-      mediaStreamSourceRef.current.connect(highpassFilter);
-      highpassFilter.connect(scriptProcessorRef.current);
-      scriptProcessorRef.current.connect(
-        captureAudioContextRef.current.destination
-      );
-      console.log(`Source sample rate: ${sourceSampleRate} Hz`);
-
-      // Reset VAD state
-      consecutiveSilentFramesRef.current = 0;
-      setIsSpeaking(false);
-
-      if (silenceTimeoutRef.current) {
-        clearTimeout(silenceTimeoutRef.current);
-        silenceTimeoutRef.current = null;
-      }
-
-      if (speakingTimeoutRef.current) {
-        clearTimeout(speakingTimeoutRef.current);
-        speakingTimeoutRef.current = null;
-      }
-
-      // Reset PCM audio state
-      audioBufferQueueRef.current = [];
-      isPlayingRef.current = false;
-      currentSourceRef.current = null;
-
-      // Add a small delay before processing audio to avoid initial glitches
-      setTimeout(() => {
-        // Set up audio processing with DC offset removal
-        scriptProcessorRef.current.onaudioprocess = (audioProcessingEvent) => {
-          // First run the original handler
-          scriptProcessorHandler(audioProcessingEvent);
-        };
-      }, 200); // 200ms delay to ensure stable audio pipeline
-
-      // Initialize the audio queue time with a small offset to prevent immediate playback
-      if (playbackAudioContextRef.current) {
-        // Ensure playback context is in running state
-        if (playbackAudioContextRef.current.state !== "running") {
-          await playbackAudioContextRef.current.resume();
-        }
-        audioQueueTimeRef.current =
-          playbackAudioContextRef.current.currentTime + 0.1; // Add 100ms buffer
-      }
-    } catch (error) {
-      console.error("Error setting up audio stream:", error);
-      throw error;
-    }
-  }, [scriptProcessorHandler]);
-
-  const cleanup = useCallback(async () => {
-    // Clear VAD timeouts
-    if (silenceTimeoutRef.current) {
-      clearTimeout(silenceTimeoutRef.current);
-      silenceTimeoutRef.current = null;
-    }
-
-    if (speakingTimeoutRef.current) {
-      clearTimeout(speakingTimeoutRef.current);
-      speakingTimeoutRef.current = null;
-    }
-
-    setIsSpeaking(false);
-
-    // Stop audio playback
-    stopAllAudio();
-
-    // Reset PCM audio state
-    audioBufferQueueRef.current = [];
-    isPlayingRef.current = false;
-
-    if (currentSourceRef.current) {
-      try {
-        currentSourceRef.current.onended = null;
-        currentSourceRef.current.stop();
-      } catch (e) {
-        // Ignore if already stopped
-      }
-      currentSourceRef.current = null;
-    }
-
-    // Stop media stream
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    }
-
-    // Disconnect audio nodes
-    if (scriptProcessorRef.current) {
-      scriptProcessorRef.current.disconnect();
-      scriptProcessorRef.current = null;
-    }
-
-    if (mediaStreamSourceRef.current) {
-      mediaStreamSourceRef.current.disconnect();
-      mediaStreamSourceRef.current = null;
-    }
-
-    // Close audio contexts
-    if (captureAudioContextRef.current) {
-      await captureAudioContextRef.current.close().catch(console.error);
-      captureAudioContextRef.current = null;
-    }
-
-    if (playbackAudioContextRef.current) {
-      await playbackAudioContextRef.current.close().catch(console.error);
-      playbackAudioContextRef.current = null;
-    }
-
-    // Close WebSocket
-    if (websocketRef.current) {
-      websocketRef.current.close(1000, "Normal closure");
-      websocketRef.current = null;
-    }
-
-    // Reset audio queue
-    audioQueueTimeRef.current = 0;
-  }, [stopAllAudio]);
-
-  const handleOpenMicDialog = () => {
-    setMicDialogOpen(true);
-  };
-
-  const handleCloseMicDialog = () => {
-    setMicDialogOpen(false);
-  };
-
-  const handleStartRecordingWithContext = async () => {
-    try {
-      await cleanup();
-      await connectWebSocket(conversationContextRef.current);
-      await startAudioStream();
-      setIsRecording(true);
-      startTimer();
-      handleCloseMicDialog();
-    } catch (error) {
-      console.error("Error starting recording with context:", error);
-      await cleanup();
-      stopTimer();
-    }
-  };
 
   const handleRecordingButton = async () => {
     if (!isRecording) {
