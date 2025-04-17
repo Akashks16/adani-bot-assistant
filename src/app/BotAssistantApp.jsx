@@ -471,6 +471,7 @@ const BotAssistantApp = () => {
       const url =
         "wss://reliance-retail.infra.kapturecrm.com/orchestrator_reliance/ws";
       // const url = "wss://vb-platform.infra.kapturecrm.com/orchestrator/ws"
+      // "wss://happy-topical-jaybird.ngrok-free.app/orchestrator_reliance/ws";
 
       websocketRef.current = new WebSocket(url);
 
@@ -479,7 +480,7 @@ const BotAssistantApp = () => {
           source: "client",
           audio: "",
           client_id: "adani",
-          //   user_code: "E800A8184E1",
+          // user_code: "E800A8184E1",
         };
 
         websocketRef.current.send(JSON.stringify(initialMessage));
